@@ -1,0 +1,2 @@
+# Runtime user settings — contains the (obfuscated) GitHub PAT. Never commit.
+data.json
