@@ -10,10 +10,11 @@
  *   1. A GitHub PAT with `repo` scope (set in plugin settings).
  *   2. The theme's "Activate Image Background" toggle left ON.
  *
- * The PAT is stored base64-obfuscated in data.json and never logged.
+ * The PAT is stored in the OS keychain (Obsidian secret storage) when available,
+ * falling back to base64-obfuscated data.json on older Obsidian. Never logged.
  */
 
-const { Plugin, PluginSettingTab, Setting, FuzzySuggestModal, Notice, requestUrl } = require('obsidian');
+const { Plugin, PluginSettingTab, Setting, FuzzySuggestModal, Notice, requestUrl, SecretComponent } = require('obsidian');
 
 // ── Constants ────────────────────────────────────────────────────────────────
 const SNIPPET_ID = 'qa-wallpaper';
@@ -21,6 +22,7 @@ const SNIPPET_PATH = '.obsidian/snippets/qa-wallpaper.css';
 const SNIPPETS_DIR = '.obsidian/snippets';
 const IMAGE_RE = /\.(jpe?g|png|gif|webp|bmp|avif)$/i;
 const TOKEN_PREFIX = 'b64:';
+const PAT_SECRET_ID = 'jbt-bg-github-pat'; // Obsidian secretStorage key (OS keychain)
 
 const DEFAULT_SETTINGS = {
   poolFolder: 'Wallpapers',
@@ -118,15 +120,27 @@ class JBTBGSettingTab extends PluginSettingTab {
         t.inputEl.addEventListener('change', async () => { await p.ensurePool(); });
       });
 
-    new Setting(containerEl)
-      .setName('GitHub PAT')
-      .setDesc('Personal access token with repo scope. Stored obfuscated; never logged.')
-      .addText((t) => t
-        .setPlaceholder(p.settings.githubToken ? '•••••••• (set — type to replace)' : 'ghp_…')
-        .onChange(async (v) => { const val = v.trim(); if (val) { p.settings.githubToken = val; await p.saveSettings(); } }))
-      .addButton((b) => b
-        .setButtonText('Clear')
-        .onClick(async () => { p.settings.githubToken = ''; await p.saveSettings(); this.display(); }));
+    if (this.app.secretStorage) {
+      new Setting(containerEl)
+        .setName('GitHub PAT')
+        .setDesc('Stored in the OS keychain (Obsidian secret storage). Never logged.')
+        .addComponent((el) => new SecretComponent(this.app, el)
+          .setValue(p.settings.githubToken || '')
+          .onChange((val) => p.setToken(val || '')))
+        .addButton((b) => b
+          .setButtonText('Clear')
+          .onClick(async () => { await p.setToken(''); this.display(); }));
+    } else {
+      new Setting(containerEl)
+        .setName('GitHub PAT')
+        .setDesc('Stored obfuscated in data.json. Update Obsidian (1.11.4+) for OS keychain storage.')
+        .addText((t) => t
+          .setPlaceholder(p.settings.githubToken ? '•••••••• (set — type to replace)' : 'ghp_…')
+          .onChange(async (v) => { const val = v.trim(); if (val) { await p.setToken(val); } }))
+        .addButton((b) => b
+          .setButtonText('Clear')
+          .onClick(async () => { await p.setToken(''); this.display(); }));
+    }
 
     new Setting(containerEl)
       .setName('Test GitHub auth')
@@ -192,13 +206,47 @@ class JBTBGPlugin extends Plugin {
   async loadSettings() {
     const data = await this.loadData();
     this.settings = Object.assign({}, DEFAULT_SETTINGS, data || {});
-    if (this.settings.githubToken) this.settings.githubToken = deobfuscate(this.settings.githubToken);
+    this.settings.githubToken = this.resolveToken(this.settings.githubToken);
+  }
+
+  // Prefer the OS keychain (Obsidian secretStorage); migrate + fall back to data.json.
+  resolveToken(rawLegacy) {
+    let tok = '';
+    try {
+      if (this.app.secretStorage) {
+        tok = this.app.secretStorage.getSecret(PAT_SECRET_ID) || '';
+        if (!tok && rawLegacy) {
+          tok = deobfuscate(rawLegacy);
+          if (tok) this.app.secretStorage.setSecret(PAT_SECRET_ID, tok);
+        }
+      } else if (rawLegacy) {
+        tok = deobfuscate(rawLegacy);
+      }
+    } catch (e) {
+      console.warn('[JBT-BG] keychain unavailable, using data.json:', e);
+      tok = rawLegacy ? deobfuscate(rawLegacy) : '';
+    }
+    return tok;
   }
 
   async saveSettings() {
     const copy = Object.assign({}, this.settings);
-    if (copy.githubToken) copy.githubToken = obfuscate(copy.githubToken);
+    if (this.app.secretStorage) {
+      delete copy.githubToken; // token lives in the keychain
+    } else if (copy.githubToken) {
+      copy.githubToken = obfuscate(copy.githubToken);
+    }
     await this.saveData(copy);
+  }
+
+  // Update the PAT (live value + persistence). Never logged.
+  async setToken(token) {
+    token = (token || '').trim();
+    this.settings.githubToken = token;
+    if (this.app.secretStorage) {
+      try { this.app.secretStorage.setSecret(PAT_SECRET_ID, token); } catch (e) { console.warn('[JBT-BG] keychain write failed:', e); }
+    }
+    await this.saveSettings();
   }
 
   // No network on start — just local setup.

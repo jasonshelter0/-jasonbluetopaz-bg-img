@@ -1,7 +1,7 @@
 {
   "id": "jasonbluetopaz-bg-img",
   "name": "Jason Blue Topaz BG",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "minAppVersion": "0.15.0",
   "description": "One-command wallpaper updater: pick a picture → upload to GitHub, purge jsDelivr, cache-bust, and reload. Built for the Blue Topaz fork.",
   "author": "Jason",

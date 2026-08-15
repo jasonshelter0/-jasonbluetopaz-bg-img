@@ -21,6 +21,7 @@ with every step logged to the console under `[JBT-BG]`.
 
 ## Notes
 
-- The PAT is stored base64-obfuscated in `data.json` and never logged.
+- The PAT is stored in the OS keychain (Obsidian secret storage, 1.11.4+) when
+  available, otherwise base64-obfuscated in `data.json`. Never logged.
 - Both the CDN purge (12 h) *and* the `?v=` bump (7-day browser cache) are required.
 - The snippet lives outside `theme.css`, so it survives theme updates.
